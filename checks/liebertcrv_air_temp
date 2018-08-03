@@ -1,0 +1,110 @@
+#!/usr/bin/python
+# -*- encoding: utf-8; py-indent-offset: 4 -*-
+
+# ********************************
+# Title: Air Temperature of Liebert In-Row CRV
+# Check / Checkman name: liebertcrv_air_temp
+# Author: Anton Goretsky
+# Monitors select SNMP oid's for supply, return, set point and control sensor information.
+# ********************************
+
+# Default parameters dictionary for liebertcrv_air_temp
+# Format is low crit, low warn, high warn, high crit
+factory_settings["liebertcrv_air_temp_params"] = {
+    "allAisle_levels": (15, 17, 25, 27),
+}
+
+def liebertcrv_inventory_air_temp(info):
+    # List of names for use as service descriptions
+    # Is within inventory as global scope will be mixed with other plugins.
+    name_list = [ 
+        "Hot Aisle Temperature", 
+        "Cold Aisle Temperature", 
+        "Air Temperature Set Point",
+        "Air Temperature Control Sensor" ]
+    inv = []
+    ctr = 0
+    for full_list in info:
+        for item in full_list:
+            inv.append( (name_list[ctr], {} ) )
+            ctr += 1
+    return inv
+
+def liebertcrv_check_air_temp(item, params, info):
+    # Unpacking Warn and Crit values, Initializing vars.
+    low_crit, low_warn, high_warn, high_crit = params["allAisle_levels"]
+    # Proper formatting for exporting low and high warn/crit values together in perfdata
+    perf_warn = "%.1f:%.1f" % (low_warn, high_warn)
+    perf_crit = "%.1f:%.1f" % (low_crit, high_crit)
+    perfdata = []
+    unit = u"\xb0C"
+
+    # Actual check
+    for hotAisle_temp, coldAisle_temp, set_point, control_sensor in info:
+
+        if item == "Hot Aisle Temperature":
+            perfdata.append( ("temp", hotAisle_temp + "C", perf_warn, perf_crit, 0.0, 40.0) )
+            hotAisle_temp = float(hotAisle_temp)
+            description = "%.1f %s, (Low crit/warn at %.1f/%.1f %s, High warn/crit at %.1f/%.1f %s)" % (hotAisle_temp, unit, low_crit, low_warn, unit, high_warn, high_crit, unit)
+
+            if hotAisle_temp <= low_crit or hotAisle_temp >= high_crit:
+                return 2, "CRIT - %s" % (description), perfdata
+            elif (hotAisle_temp <= low_warn and hotAisle_temp > low_crit) or (hotAisle_temp >= high_warn and hotAisle_temp < high_crit):
+                return 1, "WARN - %s" % (description), perfdata
+            elif hotAisle_temp > low_warn or hotAisle_temp < high_warn:
+                return 0, "OK - %s" % (description), perfdata
+            else:
+                return 3, "UNKNOWN - There is an issue in the check (Hot Aisle / Inlet Temp)"
+        
+        if item == "Cold Aisle Temperature":
+            perfdata.append( ("temp", coldAisle_temp + "C", perf_warn, perf_crit, 0.0, 40.0) )
+            coldAisle_temp = float(coldAisle_temp)
+            description = "%.1f %s, (Low crit/warn at %.1f/%.1f %s, High warn/crit at %.1f/%.1f %s)" % (coldAisle_temp, unit, low_crit, low_warn, unit, high_warn, high_crit, unit)
+
+            if coldAisle_temp <= low_crit or coldAisle_temp >= high_crit:
+                return 2, "CRIT - %s" % (description), perfdata
+            elif (coldAisle_temp <= low_warn and coldAisle_temp > low_crit) or (coldAisle_temp >= high_warn and coldAisle_temp < high_crit):
+                return 1, "WARN - %s" % (description), perfdata
+            elif coldAisle_temp > low_warn or coldAisle_temp < high_warn:
+                return 0, "OK - %s" % (description), perfdata
+            else:
+                return 3, "UNKNOWN - There is an issue in the check (Cold Aisle / Outlet Temp)"
+
+        if item == "Air Temperature Set Point":
+            perfdata.append( ("temp", set_point + "C", None, None, 0.0, 40.0) )
+            set_point = float(set_point)
+            return 0, "OK - %.1f %s" % (set_point, unit), perfdata
+
+        # Grafana in OMD will display 1 for supply, 2 for return, and 0 for anything else.
+        if item == "Air Temperature Control Sensor":
+            if control_sensor.lower() == "supply":
+                perfdata.append( ("control_sensor", 1, None, None, None, None) )
+                return 0, "OK - \"%s\"" % (control_sensor), perfdata
+            elif control_sensor.lower() == "return":
+                perfdata.append( ("control_sensor", 2, None, None, None, None) )
+                return 0, "OK - \"%s\"" % (control_sensor), perfdata 
+            else:
+                perfdata.append( ("control_sensor", 0, None, None, None, None) )
+                return 0, "OK - \"%s\"" % (control_sensor), perfdata
+
+def scan_liebert(oid):
+    if oid(".1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1.4240"):
+        return "liebert" in oid(".1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1.4240").lower()
+    else:
+        return oid(".1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1.4240")
+
+check_info["liebertcrv_air_temp"] = {
+    "inventory_function"       : liebertcrv_inventory_air_temp,
+    "check_function"           : liebertcrv_check_air_temp,
+    "group"                    : "liebertCRV_air_temp",
+    "has_perfdata"             : True,
+    "service_description"      : "%s",
+    "default_levels_variable"  : "liebertcrv_air_temp_params",
+    "snmp_scan_function"       : scan_liebert,
+    "snmp_info"                : (".1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1", [
+                                  "4291", # Hot Aisle Temperature
+                                  "5002", # Cold Aisle Temperature
+                                  "5008", # Air Temp Set Point
+                                  "5012"  # Air Temp Control Sensor
+                                 ] )
+}
